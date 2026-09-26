@@ -20,10 +20,33 @@ def format_filing(f, txs, perf_fn=None, max_rows=25):
     lines.append("\n<i>Yatırım tavsiyesi değildir.</i>")
     return "\n".join(lines)
 
+def configured():
+    return bool(TELEGRAM_TOKEN and TELEGRAM_CHAT_ID)
+
+def _chunks(text, limit=3800):
+    out, cur = [], ""
+    for line in text.split("\n"):
+        if cur and len(cur) + len(line) + 1 > limit:
+            out.append(cur); cur = ""
+        cur = (cur + "\n" + line) if cur else line
+    return out + ([cur] if cur else [])
+
+class TelegramError(RuntimeError):
+    pass
+
 def send(text):
-    if not (TELEGRAM_TOKEN and TELEGRAM_CHAT_ID):
-        print(text); return
-    for chunk in [text[i:i + 3900] for i in range(0, len(text), 3900)]:
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", timeout=30,
-                      json={"chat_id": TELEGRAM_CHAT_ID, "text": chunk, "parse_mode": "HTML",
-                            "disable_web_page_preview": True}).raise_for_status()
+    """Send to Telegram. Returns False if not configured; raises TelegramError with Telegram's reason on failure."""
+    if not configured():
+        print("[telegram kapalı] " + text.replace("\n", " | ")[:300])
+        return False
+    for chunk in _chunks(text):
+        r = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", timeout=30,
+                          json={"chat_id": TELEGRAM_CHAT_ID, "text": chunk, "parse_mode": "HTML",
+                                "disable_web_page_preview": True})
+        if not r.ok:
+            try:
+                reason = r.json().get("description", r.text)
+            except ValueError:
+                reason = r.text
+            raise TelegramError(f"Telegram {r.status_code}: {reason}")
+    return True
